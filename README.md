@@ -10,16 +10,42 @@ An interactive drag-and-drop educational tool for learning PCB assembly. Load an
 - Visual hint system after repeated incorrect attempts
 - Component information panel with designator, description, and target coordinates
 
-## Requirements
+🚀 Quick Start Guide
+Step 1 — Install Miniconda
 
+Download from docs.anaconda.com/miniconda. NOTE: install Miniconda, NOT Anaconda Distribution.
+Run the installer with default options
+
+Open the Anaconda prompt, go to the directory to load the git in.  Eg: /home/<user>/projects/
+
+BASH
+```
+git clone https://github.com/Alfcon/APL.git
+
+cd APL
+```
+
+
+
+## Requirements
 - Python 3.6+
 - PyQt5
 - pandas
 - gerber (python-gerber)
 
+- Altium files
+  - Altium project as a zip (ADCS Integration Board.zip)
+  - Gerber file (Gerber for PCB1.PcbDoc.zip)
+  - 3D Model (STEP) (STEP_[No Variations] for PCB1.PcbDoc.step)
+
 ## Installation
 
-```bash
+bash
+```
+conda create -n apl python=3.6.* -y
+
+conda activate apl
+
 pip install -r requirements.txt
 ```
 
