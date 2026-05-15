@@ -1,6 +1,8 @@
 import sys
+import os
 import math
 import re
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QLabel, QPushButton, QListWidget,
                              QTextEdit, QGraphicsView, QGraphicsScene,
@@ -18,9 +20,29 @@ PREFIX_LABELS = {
     'Y': 'Crystals', 'X': 'Crystals',
     'S': 'Switches', 'SW': 'Switches',
     'F': 'Fuses', 'FB': 'Ferrite Beads',
-    'M': 'Mounting Holes', 'H': 'Mounting Holes',
+    'M': 'Mounting Holes', 'H': 'Mounting Holes', 'MNT': 'Mounting Holes',
     'LED': 'LEDs',
+    'AC': 'Sensors', 'IMU': 'Sensors',
+    'BUCK': 'Power', 'MTORQUER': 'Magnetorquers',
 }
+
+# Designators that don't follow the alpha-prefix convention (power flags, the
+# magnetorquer coil terminals which collide with X/Y crystal prefixes, etc.).
+SPECIAL_DESIGNATOR_CATEGORY = {
+    'X+': 'Magnetorquer Pins', 'X-': 'Magnetorquer Pins',
+    'Y+': 'Magnetorquer Pins', 'Y-': 'Magnetorquer Pins',
+    'Z+': 'Magnetorquer Pins', 'Z-': 'Magnetorquer Pins',
+    '+3V3': 'Test Points', '+5V': 'Test Points',
+    'VBUS1': 'Test Points', 'SD_CD1': 'Test Points',
+}
+
+
+def category_for(designator):
+    up = designator.upper()
+    if up in SPECIAL_DESIGNATOR_CATEGORY:
+        return SPECIAL_DESIGNATOR_CATEGORY[up]
+    prefix = designator_prefix(designator)
+    return PREFIX_LABELS.get(prefix, prefix)
 
 
 def designator_prefix(designator):
@@ -32,8 +54,8 @@ def designator_sort_key(designator):
     return [int(t) if t.isdigit() else t.lower()
             for t in re.split(r'(\d+)', designator)]
 from PyQt5.QtCore import Qt, QMimeData, QPointF, QTimer, QSize
-from PyQt5.QtGui import (QDrag, QPixmap, QPainter, QColor, QPen, QBrush, QFont,
-                         QTransform, QIcon)
+from PyQt5.QtGui import (QDrag, QPixmap, QImage, QPainter, QColor, QPen, QBrush,
+                         QFont, QTransform, QIcon)
 from utils.parser import PCBParser
 from pcb_components import ComponentItem
 
@@ -250,6 +272,9 @@ class MainWindow(QMainWindow):
             return
 
         if ok:
+            # ZIPs typically don't include the BOM, so also look in the
+            # directory where the user picked the file from.
+            self.parser.find_and_load_bom(os.path.dirname(os.path.abspath(file_path)))
             self.populate_component_list()
             QMessageBox.information(self, "Success", "Project loaded successfully.")
         else:
@@ -436,12 +461,37 @@ class MainWindow(QMainWindow):
         self.fit_board()
 
     def _build_component_thumbnails(self):
-        """Load the per-component PNGs rendered from the STEP file, if any."""
+        """Load the per-component PNGs rendered from the STEP file, keying the
+        white render background out to transparent so placed components don't
+        cover the board with white squares."""
         self.component_thumbnails = {}
         for designator, path in self.parser.step_thumbnails.items():
-            pixmap = QPixmap(path)
-            if not pixmap.isNull():
+            pixmap = self._load_keyed_thumbnail(path)
+            if pixmap is not None and not pixmap.isNull():
                 self.component_thumbnails[designator] = pixmap
+
+    @staticmethod
+    def _load_keyed_thumbnail(path):
+        """Load a STEP thumbnail PNG and make the white render background
+        transparent. Near-white *desaturated* pixels (the render bg and its AA
+        edge ramp) are alpha-keyed; everything else stays fully opaque."""
+        image = QImage(path)
+        if image.isNull():
+            return None
+        image = image.convertToFormat(QImage.Format_ARGB32)
+        w, h = image.width(), image.height()
+        ptr = image.bits()
+        ptr.setsize(h * image.bytesPerLine())
+        arr = np.frombuffer(ptr, np.uint8).reshape((h, image.bytesPerLine() // 4, 4))[:, :w, :]
+        bgr = arr[:, :, :3].astype(np.int16)
+        mx = bgr.max(axis=2)
+        mn = bgr.min(axis=2)
+        sat = mx - mn
+        is_bg = (mx >= 240) & (sat <= 12)
+        ramp = np.clip((255 - mx) * (255.0 / 15.0), 0, 255)
+        alpha = np.where(is_bg, ramp, 255).astype(np.uint8)
+        arr[:, :, 3] = alpha
+        return QPixmap.fromImage(image.copy())
 
     def _build_category_filter(self):
         self.cmb_category.blockSignals(True)
@@ -502,15 +552,8 @@ class MainWindow(QMainWindow):
                 self.scene.removeItem(target['label'])
                 target['label'] = None
 
-            data = target['data']
-            comp_item = ComponentItem(
-                data,
-                target_x, target_y,
-                width=data.get('width_mm', 3.0) * self.scale_factor,
-                height=data.get('height_mm', 2.0) * self.scale_factor,
-                rotation=data.get('rotation', 0.0),
-            )
-            self.scene.addItem(comp_item)
+            self._add_placed_component(designator, target['data'],
+                                       target_x, target_y)
 
             return True
         else:
@@ -525,6 +568,33 @@ class MainWindow(QMainWindow):
 
             QMessageBox.warning(self, "Incorrect", f"Incorrect placement for {designator}.")
             return False
+
+    def _add_placed_component(self, designator, data, target_x, target_y):
+        """Drop a placed component onto the board: its STEP thumbnail if one was
+        rendered, otherwise a plain footprint-sized rectangle."""
+        thumb = self.component_thumbnails.get(designator)
+        bounds = self.parser.step_thumb_bounds.get(designator)
+        if thumb is not None and not thumb.isNull() and bounds:
+            xmin, ymin, xmax, ymax = bounds
+            scene_w = (xmax - xmin) * self.scale_factor
+            item = QGraphicsPixmapItem(thumb)
+            item.setTransformationMode(Qt.SmoothTransformation)
+            s = scene_w / thumb.width() if thumb.width() else 1.0
+            item.setTransform(QTransform().scale(s, s))
+            item.setPos(xmin * self.scale_factor,
+                        (self.max_y - ymax) * self.scale_factor)
+            item.setZValue(1)
+            item.setToolTip(f"{designator}: {data['description']}")
+            self.scene.addItem(item)
+        else:
+            comp_item = ComponentItem(
+                data,
+                target_x, target_y,
+                width=data.get('width_mm', 3.0) * self.scale_factor,
+                height=data.get('height_mm', 2.0) * self.scale_factor,
+                rotation=data.get('rotation', 0.0),
+            )
+            self.scene.addItem(comp_item)
 
     def update_score(self):
         self.lbl_score.setText(f"Score: {self.score}")
@@ -580,10 +650,34 @@ class MainWindow(QMainWindow):
 
     def display_component_info(self, item):
         comp = item.data(Qt.UserRole)
-        info = f"<b>Designator:</b> {comp['designator']}<br>"
-        info += f"<b>Description:</b> {comp['description']}<br>"
-        info += f"<b>Target X:</b> {comp['x']} mm<br>"
-        info += f"<b>Target Y:</b> {comp['y']} mm<br>"
+        designator = comp['designator']
+        category = category_for(designator)
+        bom = self.parser.bom_by_designator.get(designator, {})
+
+        size_bits = []
+        w_mm = comp.get('width_mm')
+        h_mm = comp.get('height_mm')
+        if w_mm and h_mm:
+            size_bits.append(f"{w_mm:.2f}")
+            size_bits.append(f"{h_mm:.2f}")
+        z_mm = self.parser.step_thumb_heights.get(designator)
+        if z_mm:
+            size_bits.append(f"{z_mm:.2f}")
+        size_str = " &times; ".join(size_bits) + " mm" if size_bits else "&mdash;"
+
+        rows = [
+            ("Designator", designator),
+            ("Category", category),
+            ("Name", bom.get('name') or ''),
+            ("Description", bom.get('description') or ''),
+            ("Mfr Part", bom.get('part_number') or ''),
+            ("Size", size_str),
+            ("Position", f"({comp['x']:.2f}, {comp['y']:.2f}) mm"),
+        ]
+        info = "".join(
+            f"<b>{label}:</b> {value}<br>"
+            for label, value in rows if value
+        )
         self.text_desc.setHtml(info)
 
         thumb = self.component_thumbnails.get(comp['designator'])

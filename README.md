@@ -1,53 +1,49 @@
 # PCB Assembly Puzzle
 
-An interactive drag-and-drop educational tool for learning PCB assembly. Load an Altium Designer project ZIP, and place components onto their correct positions on the board outline.
+An interactive drag-and-drop educational tool for learning PCB assembly. Load an Altium Designer project (ZIP or CSV), the matching Gerber outline, and a STEP 3D model, then place each component onto its correct position on the rendered board.
 
 ## Features
 
-- Loads Altium Pick & Place CSVs and Gerber board outlines from a ZIP
-- Drag-and-drop components from a list onto the board view
-- Score tracking for correct placements
-- Visual hint system after repeated incorrect attempts
-- Component information panel with designator, description, and target coordinates
-
-🚀 Quick Start Guide
-Step 1 — Install Miniconda
-
-Download from docs.anaconda.com/miniconda. NOTE: install Miniconda, NOT Anaconda Distribution.
-Run the installer with default options
-
-Open the Anaconda prompt, go to the directory to load the git in.  Eg: /home/<user>/projects/
-
-BASH
-```
-git clone https://github.com/Alfcon/APL.git
-
-cd APL
-```
-
-
+- Loads Altium **Pick & Place** CSVs *and* Altium **PCB Object Report** CSVs (auto-detected from the header).
+- Loads the project **BOM CSV** automatically when found next to the loaded file (or up one directory level), enriching the info panel with friendly part names, descriptions and manufacturer part numbers.
+- Renders the **PCB top side from Gerber files** (copper, silkscreen, soldermask, drill) so the board view shows the real board image, not just an outline.
+- Per-component **STEP 3D thumbnails**: the assembly is read through OCAF/XCAF, every designator is isolated, and each component is rendered top-down with its real colours. Thumbnails appear in the component list and on the board when a component is placed.
+- Placed components show as their **STEP thumbnail** scaled to real mm size with the white render background alpha-keyed out, so they sit cleanly over the green PCB instead of as flat rectangles.
+- **Component Information panel** with Designator, Category, BOM Name, BOM Description, Manufacturer Part Number, Size (W × H × 3D-height mm), and Position. Empty fields are omitted automatically.
+- **Category filter** dropdown grouped by designator prefix (Resistors, Capacitors, ICs, Connectors, Test Points, Magnetorquer Pins, …) with per-category counts.
+- Zoom / Pan / Fit-Board / Reset controls.
+- Score tracking and a flashing red hint after three incorrect placements of the same component.
 
 ## Requirements
-- Python 3.6+
+
+### Main app
+
+- Python 3.10+
 - PyQt5
+- numpy
 - pandas
-- gerber (python-gerber)
+- pcb-tools
+- cairocffi (used by pcb-tools' Cairo backend for the board image)
 
-- Altium files
-  - Altium project as a zip (ADCS Integration Board.zip)
-  - Gerber file (Gerber for PCB1.PcbDoc.zip)
-  - 3D Model (STEP) (STEP_[No Variations] for PCB1.PcbDoc.step)
-
-## Installation
-
-bash
-```
-conda create -n apl python=3.6.* -y
-
-conda activate apl
-
+```bash
 pip install -r requirements.txt
 ```
+
+### Optional — 3D component thumbnails
+
+STEP rendering runs in a separate Python environment that has `pythonocc-core` installed (the wheel doesn't play well with the main app's dependencies). The easiest path is a conda env named `adcs-step`:
+
+```bash
+conda create -n adcs-step -c conda-forge pythonocc-core
+```
+
+The app auto-discovers `adcs-step` under common conda install roots (`miniconda3`, `anaconda3`, `miniforge3`, `mambaforge`, `.conda`). If your interpreter lives elsewhere, point at it explicitly:
+
+```bash
+export ADCS_STEP_PYTHON=/path/to/python   # interpreter with pythonocc-core
+```
+
+If no such environment is available, all other features still work — the **Load 3D Model** button simply reports the env is missing.
 
 ## Usage
 
@@ -55,18 +51,22 @@ pip install -r requirements.txt
 python pcb_puzzle.py
 ```
 
-1. Click **Load Altium ZIP** and select a ZIP file containing Altium Pick & Place CSV and Gerber outline files.
-2. Drag components from the list on the left onto the board.
-3. Place each component within the tolerance zone of its target position to score points.
-4. After 3 incorrect attempts on the same component, a flashing red circle hints at the correct location.
+1. **Load Altium ZIP or CSV** — pick the Altium project ZIP, an Object Report CSV, or a Pick & Place CSV. The matching `BOM*.csv` is auto-loaded if it sits in the same directory or one level above.
+2. **Load Board Outline** — pick a Gerber ZIP (preferred — the full top side is rendered) or a single outline file (`.gm1` / `.gko` / `.gml` / `.gbr`).
+3. **Load 3D Model (STEP)** — pick the project's STEP export. Per-component thumbnails render in ~15 s and populate the list and detail panel.
+4. Drag a component from the list onto the board. Land it within the tolerance zone of its target to score; placement renders the STEP thumbnail at real mm size, rotation included.
+5. After three incorrect attempts on the same component, a flashing red circle hints at the correct location.
 
 ## Project Structure
 
 ```
-├── pcb_puzzle.py          # Main application entry point
-├── pcb_components.py      # ComponentItem graphics item class
+.
+├── pcb_puzzle.py              # Main PyQt5 application
+├── pcb_components.py          # ComponentItem fallback graphics item (used when no STEP thumb)
 ├── utils/
-│   └── parser.py          # PCBParser for CSV and Gerber file parsing
+│   ├── parser.py              # PCBParser: CSV, BOM, Gerber outline + image, STEP orchestration
+│   └── step_render_worker.py  # Standalone STEP -> per-component PNG worker (pythonocc-core)
+├── downloads/                 # Example project files (not required)
 ├── requirements.txt
 └── README.md
 ```

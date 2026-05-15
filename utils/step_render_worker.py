@@ -12,11 +12,17 @@ components_json is a file containing a list of objects with at least:
 The STEP assembly is read through XCAF so each component lives as its own named
 node (the Altium designator: "R27", "IC1", ...). For every requested designator
 we display *only* that node's geometry, frame the orthographic top-down camera
-on its bounding box, and dump a tightly-cropped PNG. Designators with no 3D body
-in the STEP (test points, mounting holes, power flags) are simply skipped.
+on a square region around its bounding box, and dump a tightly-cropped PNG.
+Designators with no 3D body in the STEP (test points, mounting holes, power
+flags) are simply skipped.
 
 Prints a single line of JSON to stdout on success:
-    {"thumbs": {"R1": "/abs/path/R1.png", ...}}
+    {"thumbs":  {"R1": "/abs/path/R1.png", ...},
+     "bounds":  {"R1": [xmin, ymin, xmax, ymax], ...},
+     "heights": {"R1": z_extent_mm, ...}}
+`bounds` is the square board-coordinate (mm) region each PNG covers (so the
+caller can place the thumbnail back on the board at the right size and spot);
+`heights` is the part's standoff above the PCB in mm (Z extent of its STEP bbox).
 """
 import os
 import re
@@ -77,6 +83,8 @@ def main():
     view.Camera().SetProjectionType(Graphic3d_Camera.Projection_Orthographic)
 
     thumbs = {}
+    bounds = {}
+    heights = {}
 
     def _render(designator, label):
         """Display only this node, frame the top-down camera on it, dump a PNG."""
@@ -86,14 +94,20 @@ def main():
         if box.IsVoid():
             return
         xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
+
+        # Square framing region centred on the component, so the PNG's pixels
+        # map linearly onto a known board-coordinate square (see module docstring).
+        cx = (xmin + xmax) / 2.0
+        cy = (ymin + ymax) / 2.0
+        half = max(xmax - xmin, ymax - ymin) / 2.0 + MARGIN_MM
         frame = Bnd_Box()
-        frame.Update(xmin - MARGIN_MM, ymin - MARGIN_MM, zmin - MARGIN_MM,
-                     xmax + MARGIN_MM, ymax + MARGIN_MM, zmax + MARGIN_MM)
+        frame.Update(cx - half, cy - half, zmin - MARGIN_MM,
+                     cx + half, cy + half, zmax + MARGIN_MM)
 
         ais = XCAFPrs_AISObject(label)
         context.Display(ais, False)
         view.SetProj(V3d_Zpos)
-        view.FitAll(frame, 0.01)
+        view.FitAll(frame, 0.0)
         viewer.Repaint()
 
         out_png = os.path.join(out_dir, _safe_name(designator) + '.png')
@@ -101,6 +115,8 @@ def main():
         context.Remove(ais, False)
         if os.path.exists(out_png):
             thumbs[designator] = out_png
+            bounds[designator] = [cx - half, cy - half, cx + half, cy + half]
+            heights[designator] = zmax - zmin
 
     # Walk the assembly tree. A node is a component when its referred-shape name
     # matches a requested designator; we render it inline and stop descending
@@ -126,7 +142,7 @@ def main():
     for i in range(free.Length()):
         _walk(free.Value(i + 1))
 
-    print(json.dumps({"thumbs": thumbs}))
+    print(json.dumps({"thumbs": thumbs, "bounds": bounds, "heights": heights}))
 
 
 if __name__ == "__main__":

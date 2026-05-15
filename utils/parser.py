@@ -61,6 +61,9 @@ class PCBParser:
         self.board_image_path = None
         self.board_image_bbox_mm = None  # (min_x, min_y, max_x, max_y) in mm
         self.step_thumbnails = {}  # designator -> per-component PNG path
+        self.step_thumb_bounds = {}  # designator -> (xmin, ymin, xmax, ymax) mm region of the PNG
+        self.step_thumb_heights = {}  # designator -> z extent (mm) from the STEP bbox
+        self.bom_by_designator = {}  # designator -> {'name','description','part_number'}
 
     def extract_zip(self, zip_path):
         try:
@@ -220,10 +223,13 @@ class PCBParser:
 
         Each component in `components` (dicts with designator/x/y/width_mm/height_mm)
         gets its own tightly-framed top-down PNG. On success populates
-        self.step_thumbnails (designator -> png path) and returns True. Returns
-        False (with a printed reason) on any failure.
+        self.step_thumbnails (designator -> png path) and self.step_thumb_bounds
+        (designator -> mm region) and returns True. Returns False (with a printed
+        reason) on any failure.
         """
         self.step_thumbnails = {}
+        self.step_thumb_bounds = {}
+        self.step_thumb_heights = {}
 
         if not os.path.exists(step_path):
             print(f"STEP render skipped: file not found: {step_path}")
@@ -289,6 +295,12 @@ class PCBParser:
             return False
 
         self.step_thumbnails = thumbs
+        self.step_thumb_bounds = {
+            d: tuple(b) for d, b in info.get('bounds', {}).items()
+        }
+        self.step_thumb_heights = {
+            d: float(h) for d, h in info.get('heights', {}).items()
+        }
         print(f"Rendered {len(thumbs)} STEP component thumbnails into {out_dir}")
         return True
 
@@ -356,6 +368,7 @@ class PCBParser:
 
     def _parse_object_report(self, filepath):
         """Parse an Altium PCB Object Report CSV (filters Object Kind == 'Component')."""
+        self.bom_by_designator = {}
         try:
             df = pd.read_csv(filepath, low_memory=False)
         except Exception as e:
@@ -440,6 +453,63 @@ class PCBParser:
             })
 
         print(f"Successfully parsed {len(self.components)} components from Object Report.")
+
+        # Pick up a sibling BOM CSV if one exists in the same directory tree.
+        # (When loading from a ZIP this looks inside the temp dir; the caller
+        # is expected to also call find_and_load_bom on the ZIP's source dir.)
+        self.find_and_load_bom(os.path.dirname(os.path.abspath(filepath)))
+
+    def find_and_load_bom(self, start_dir):
+        """Look in start_dir's tree (and its parent's tree) for a CSV whose name
+        contains 'BOM'. Loads the first one whose columns look like a BOM."""
+        seen = set()
+        for d in (start_dir, os.path.dirname(start_dir or '') or None):
+            if not d or d in seen or not os.path.isdir(d):
+                continue
+            seen.add(d)
+            for root, _dirs, files in os.walk(d):
+                for f in files:
+                    if not f.lower().endswith('.csv') or 'bom' not in f.lower():
+                        continue
+                    if self._parse_bom_csv(os.path.join(root, f)):
+                        return
+
+    def _parse_bom_csv(self, path):
+        """Populate self.bom_by_designator from a BOM CSV. Returns True on success."""
+        try:
+            df = pd.read_csv(path, low_memory=False)
+        except Exception as e:
+            print(f"BOM read failed for {path}: {e}")
+            return False
+        cols = {c.lower(): c for c in df.columns}
+        designator_col = cols.get('designator')
+        if not designator_col:
+            return False
+        name_col = cols.get('name')
+        desc_col = cols.get('description')
+        pn_col = cols.get('part number') or cols.get('manufacturer part number')
+
+        count = 0
+        for _, row in df.iterrows():
+            def _cell(col):
+                if not col or col not in row.index:
+                    return ''
+                v = row[col]
+                if pd.isna(v):
+                    return ''
+                return str(v).strip().rstrip(',').strip()
+            info = {
+                'name': _cell(name_col),
+                'description': _cell(desc_col),
+                'part_number': _cell(pn_col),
+            }
+            for d in str(row[designator_col]).split(','):
+                d = d.strip()
+                if d and d.lower() != 'nan':
+                    self.bom_by_designator[d] = info
+                    count += 1
+        print(f"Loaded BOM: {count} designators from {os.path.basename(path)}")
+        return True
 
     def _parse_pnp(self, filepath):
         try:
