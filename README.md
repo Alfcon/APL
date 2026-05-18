@@ -66,7 +66,7 @@ python pcb_puzzle.py
 ├── utils/
 │   ├── parser.py              # PCBParser: CSV, BOM, Gerber outline + image, STEP orchestration
 │   └── step_render_worker.py  # Standalone STEP -> per-component PNG worker (pythonocc-core)
-├── downloads/                 # Example project files (not required)
+├── downloads/                 # Project files from Altium
 ├── requirements.txt
 └── README.md
 ```
