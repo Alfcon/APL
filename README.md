@@ -89,8 +89,25 @@ python pcb_puzzle.py
 ```
 
 1. **Load Altium ZIP or CSV** — pick the Altium project ZIP, an Object Report CSV, or a Pick & Place CSV. The matching `BOM*.csv` is auto-loaded if it sits in the same directory or one level above.
+
+   Exporting from Altium Designer:
+   1. *Pick & Place CSV*: open the PCB document, then **File » Assembly Outputs » Generates pick and place files**. In the Pick and Place Setup dialog select **CSV** format and **Metric** units (the app reads mm), and include at least the Designator, Mid X, Mid Y, Rotation, Layer and Comment columns. The file lands in the project's output folder as `Pick Place for <board>.csv`.
+   2. *BOM CSV* (optional, enriches the info panel): **Reports » Bill of Materials** (Report Manager). Include the **Designator**, **Name**, **Description** and **Part Number** columns, export as **CSV**, and keep "BOM" in the filename so the app auto-detects it. Save it next to the Pick & Place CSV (or one directory above).
+
 2. **Load Board Outline** — pick a Gerber ZIP (preferred — the full top side is rendered) or a single outline file (`.gm1` / `.gko` / `.gml` / `.gbr`).
+
+   Exporting from Altium Designer:
+   1. Open the PCB document, then **File » Fabrication Outputs » Gerber Files**.
+   2. On the **Layers** tab choose **Plot Layers » Used On** — make sure the top copper (GTL), top silkscreen (GTO), top soldermask (GTS) and the outline layer (GM1 / GKO) are included; either inch or mm units work (the app converts).
+   3. Also run **File » Fabrication Outputs » NC Drill Files** with the same settings if you want drill holes in the render.
+   4. ZIP the generated output folder and load that ZIP — the app picks the outline and renders the full top side from it.
+
 3. **Load 3D Model (STEP)** — pick the project's STEP export. Per-component thumbnails render in ~15 s and populate the list and detail panel.
+
+   Exporting from Altium Designer:
+   1. Open the PCB document, then **File » Export » STEP 3D**.
+   2. In the export options, include **components with 3D bodies** and prefer **generic/STEP models** over simple extruded bodies — the app matches STEP assembly node names to designators (`R27`, `IC1`, …), so component models must be exported, not just the bare board.
+   3. Components with no 3D body in the export (test points, mounting holes, power flags) are skipped automatically.
 4. Drag a component from the list onto the board. Land it within the tolerance zone of its target to score; placement renders the STEP thumbnail at real mm size, rotation included.
 5. Stuck? Select the component and press **Hint: Show Selected Position**, or fail three times on it — either way a flashing red circle marks the correct location (from the third miss onward, each miss also costs a point).
 6. **Reset** clears all placements and restores the full component list.
