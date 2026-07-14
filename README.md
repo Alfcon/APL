@@ -53,10 +53,25 @@ pip install -r requirements.txt
 
 ### 3. Optional — 3D component thumbnails
 
-STEP rendering runs in a separate Python environment that has `pythonocc-core` installed (the wheel doesn't play well with the main app's dependencies). The easiest path is a conda env named `adcs-step`:
+STEP rendering runs in a separate Python environment that has `pythonocc-core` installed (the wheel doesn't play well with the main app's dependencies). This needs **conda**. If you don't have it, install [Miniforge](https://github.com/conda-forge/miniforge) (lightweight conda with the conda-forge channel preconfigured):
 
 ```bash
-conda create -n adcs-step -c conda-forge pythonocc-core
+wget https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+bash Miniforge3-Linux-x86_64.sh -b -p ~/miniforge3
+```
+
+Then create the env named `adcs-step`:
+
+```bash
+~/miniforge3/bin/conda create -n adcs-step -c conda-forge pythonocc-core -y
+```
+
+(If conda is already on your PATH, plain `conda create -n adcs-step -c conda-forge pythonocc-core` works too.)
+
+Verify it worked:
+
+```bash
+~/miniforge3/envs/adcs-step/bin/python -c "import OCC; print('ok')"
 ```
 
 The app auto-discovers `adcs-step` under common conda install roots (`miniconda3`, `anaconda3`, `miniforge3`, `mambaforge`, `.conda`). If your interpreter lives elsewhere, point at it explicitly:
